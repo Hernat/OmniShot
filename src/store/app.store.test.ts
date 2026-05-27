@@ -199,3 +199,46 @@ describe("useAppStore — hydrate revoked-permission recovery", () => {
     expect(reachabilityMock).not.toHaveBeenCalled();
   });
 });
+
+describe("useAppStore — clearFolderUri", () => {
+  it("removes the persisted URI and flips in-memory state to null", async () => {
+    await AsyncStorage.setItem(KEY, "content://prev");
+    useAppStore.setState({ folderUri: "content://prev" });
+
+    await useAppStore.getState().clearFolderUri();
+
+    expect(useAppStore.getState().folderUri).toBeNull();
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBeNull();
+  });
+
+  it("resolves cleanly when in-memory state is already null and storage is empty (still calls removeItem)", async () => {
+    useAppStore.setState({ folderUri: null });
+    const removeItemSpy = jest.spyOn(AsyncStorage, "removeItem");
+
+    await expect(useAppStore.getState().clearFolderUri()).resolves.toBeUndefined();
+
+    expect(useAppStore.getState().folderUri).toBeNull();
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBeNull();
+    // Asserting the call locks in the contract: clearFolderUri always reaches
+    // AsyncStorage, even when memory is already null — so an orphan storage
+    // value (memory null + storage stale) is still cleared.
+    expect(removeItemSpy).toHaveBeenCalledWith(KEY);
+  });
+
+  it("re-throws when AsyncStorage.removeItem rejects and leaves BOTH in-memory and storage state untouched", async () => {
+    await AsyncStorage.setItem(KEY, "content://kept");
+    useAppStore.setState({ folderUri: "content://kept" });
+    jest
+      .spyOn(AsyncStorage, "removeItem")
+      .mockRejectedValueOnce(new Error("disk broken"));
+
+    await expect(useAppStore.getState().clearFolderUri()).rejects.toThrow(
+      /disk broken/,
+    );
+
+    expect(useAppStore.getState().folderUri).toBe("content://kept");
+    // The persist-before-set discipline means a removeItem rejection must NOT
+    // touch in-memory state AND must leave storage at its prior value.
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBe("content://kept");
+  });
+});

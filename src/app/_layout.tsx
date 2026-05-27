@@ -37,6 +37,7 @@ export default function RootLayout() {
       </Stack.Protected>
       <Stack.Protected guard={hasFolder}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="settings" />
       </Stack.Protected>
     </Stack>
   );

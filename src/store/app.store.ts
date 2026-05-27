@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { isFolderUriReachable } from "@/onboarding/folder-uri-reachability";
 import {
-  clearFolderUri,
+  clearFolderUri as clearPersistedFolderUri,
   getFolderUri,
   setFolderUri as persistFolderUri,
 } from "@/storage/folder-uri.storage";
@@ -12,6 +12,7 @@ interface AppState {
   hydrated: boolean;
   hydrate: () => Promise<void>;
   setFolderUri: (uri: string) => Promise<void>;
+  clearFolderUri: () => Promise<void>;
 }
 
 let hydratePromise: Promise<void> | null = null;
@@ -35,7 +36,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               { reason: result.reason, error: result.error },
             );
             try {
-              await clearFolderUri();
+              await clearPersistedFolderUri();
             } catch (clearErr) {
               console.warn(
                 "[store] clearFolderUri after reachability fail also failed:",
@@ -62,5 +63,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     await persistFolderUri(trimmed);
     set({ folderUri: trimmed });
+  },
+  clearFolderUri: async () => {
+    await clearPersistedFolderUri();
+    set({ folderUri: null });
   },
 }));

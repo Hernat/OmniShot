@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
+import { isFolderUriReachable } from "@/onboarding/folder-uri-reachability";
 import {
+  clearFolderUri,
   getFolderUri,
   setFolderUri as persistFolderUri,
 } from "@/storage/folder-uri.storage";
@@ -24,7 +26,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       try {
         const stored = await getFolderUri();
         const normalized = stored && stored.length > 0 ? stored : null;
-        set({ folderUri: normalized, hydrated: true });
+        let resolved: string | null = normalized;
+        if (normalized !== null) {
+          const result = isFolderUriReachable(normalized);
+          if (!result.reachable) {
+            console.warn(
+              "[store] persisted folder URI is unreachable — dropping",
+              { reason: result.reason, error: result.error },
+            );
+            try {
+              await clearFolderUri();
+            } catch (clearErr) {
+              console.warn(
+                "[store] clearFolderUri after reachability fail also failed:",
+                clearErr,
+              );
+            }
+            resolved = null;
+          }
+        }
+        set({ folderUri: resolved, hydrated: true });
       } catch (error) {
         console.warn("[store] hydrate failed:", error);
         set({ folderUri: null, hydrated: true });

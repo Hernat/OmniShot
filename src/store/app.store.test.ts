@@ -1,16 +1,24 @@
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 
+jest.mock("@/onboarding/folder-uri-reachability", () => ({
+  isFolderUriReachable: jest.fn(() => ({ reachable: true })),
+}));
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { isFolderUriReachable } from "@/onboarding/folder-uri-reachability";
 import { useAppStore } from "@/store/app.store";
 
 const KEY = "omnishot.folderUri";
+
+const reachabilityMock = jest.mocked(isFolderUriReachable);
 
 beforeEach(async () => {
   await AsyncStorage.clear();
   useAppStore.setState({ folderUri: null, hydrated: false });
   jest.restoreAllMocks();
   jest.clearAllMocks();
+  reachabilityMock.mockReturnValue({ reachable: true });
 });
 
 describe("useAppStore — hydrate", () => {
@@ -104,5 +112,90 @@ describe("useAppStore — setFolderUri", () => {
     ).rejects.toThrow(/disk full/);
     expect(useAppStore.getState().folderUri).toBe("content://prev");
     await expect(AsyncStorage.getItem(KEY)).resolves.toBe("content://prev");
+  });
+});
+
+describe("useAppStore — hydrate revoked-permission recovery", () => {
+  it("keeps the URI when reachability check returns reachable: true", async () => {
+    await AsyncStorage.setItem(KEY, "content://reachable");
+    reachabilityMock.mockReturnValue({ reachable: true });
+
+    await useAppStore.getState().hydrate();
+
+    expect(useAppStore.getState().folderUri).toBe("content://reachable");
+    expect(useAppStore.getState().hydrated).toBe(true);
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBe("content://reachable");
+    expect(reachabilityMock).toHaveBeenCalledWith("content://reachable");
+  });
+
+  it("drops a security-revoked URI from memory and from AsyncStorage", async () => {
+    await AsyncStorage.setItem(KEY, "content://revoked");
+    reachabilityMock.mockReturnValue({
+      reachable: false,
+      reason: "security",
+      error: new Error("Permission Denial"),
+    });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await useAppStore.getState().hydrate();
+
+    expect(useAppStore.getState().folderUri).toBeNull();
+    expect(useAppStore.getState().hydrated).toBe(true);
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalled();
+    const warnPayload = warn.mock.calls[0]?.[1] as { reason?: string } | undefined;
+    expect(warnPayload?.reason).toBe("security");
+  });
+
+  it("drops a missing-target URI from memory and from AsyncStorage", async () => {
+    await AsyncStorage.setItem(KEY, "content://gone");
+    reachabilityMock.mockReturnValue({ reachable: false, reason: "missing" });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await useAppStore.getState().hydrate();
+
+    expect(useAppStore.getState().folderUri).toBeNull();
+    expect(useAppStore.getState().hydrated).toBe(true);
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalled();
+    const warnPayload = warn.mock.calls[0]?.[1] as { reason?: string } | undefined;
+    expect(warnPayload?.reason).toBe("missing");
+  });
+
+  it("still drops the in-memory URI when clearFolderUri itself rejects (storage remains stale)", async () => {
+    await AsyncStorage.setItem(KEY, "content://stuck");
+    reachabilityMock.mockReturnValue({ reachable: false, reason: "security" });
+    jest
+      .spyOn(AsyncStorage, "removeItem")
+      .mockRejectedValueOnce(new Error("storage broken"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await useAppStore.getState().hydrate();
+
+    expect(useAppStore.getState().folderUri).toBeNull();
+    expect(useAppStore.getState().hydrated).toBe(true);
+    // Assert the two specific warns happened by content rather than exact count
+    // (resilient to future log additions in the recovery path).
+    expect(warn.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const warnMessages = warn.mock.calls.map((args) => String(args[0] ?? ""));
+    expect(
+      warnMessages.some((m) => m.includes("persisted folder URI is unreachable")),
+    ).toBe(true);
+    expect(
+      warnMessages.some((m) => m.includes("clearFolderUri after reachability fail")),
+    ).toBe(true);
+    // Spec-accepted "best effort": when removeItem rejects, the in-memory drop
+    // wins (folderUri === null routes user to onboarding via Stack.Protected)
+    // but AsyncStorage retains the unreachable URI. Documented behavior, not a
+    // bug — flagged for follow-up in deferred-work.md (Story 1.3 review).
+    await expect(AsyncStorage.getItem(KEY)).resolves.toBe("content://stuck");
+  });
+
+  it("does not call the reachability check when storage has no URI", async () => {
+    await useAppStore.getState().hydrate();
+
+    expect(useAppStore.getState().folderUri).toBeNull();
+    expect(useAppStore.getState().hydrated).toBe(true);
+    expect(reachabilityMock).not.toHaveBeenCalled();
   });
 });

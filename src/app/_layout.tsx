@@ -5,6 +5,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 
 import { initDb } from "@/db/client";
+import { initModel } from "@/model/loader";
 import { useAppStore } from "@/store/app.store";
 
 try {
@@ -19,6 +20,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     initDb();
+    initModel();
     useAppStore.getState().hydrate();
   }, []);
 
